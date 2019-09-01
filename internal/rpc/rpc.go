@@ -3,11 +3,14 @@
 package rpc
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
+	"regexp"
 	"time"
 
 	hdfs "github.com/colinmarc/hdfs/v2/internal/protocol/hadoop_hdfs"
@@ -167,12 +170,43 @@ func readBlockOpResponse(r io.Reader) (*hdfs.BlockOpResponseProto, error) {
 	return resp, err
 }
 
+var dnAliases = map[string]string{}
+
+func init() {
+	dnAlisesFile := os.Getenv("_HACK_DN_ALIASES_FILE")
+	if dnAlisesFile == "" {
+		return
+	}
+	f, err := os.Open(dnAlisesFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "_HACK_DN_ALIASES_FILE 1 -> error reading file %s\n. Error: %s", dnAlisesFile, err)
+		panic(err)
+	}
+	defer f.Close()
+	splitRegexp := regexp.MustCompile("\\s+")
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		tokens := splitRegexp.Split(line, 2)
+		dnAliases[tokens[0]] = tokens[1]
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "_HACK_DN_ALIASES_FILE 2 -> error reading file %s\n. Error: %s", dnAlisesFile, err)
+		panic(err)
+	}
+	fmt.Printf("dnAliases: %v\n", dnAliases)
+}
+
 func getDatanodeAddress(datanode *hdfs.DatanodeIDProto, useHostname bool) string {
 	var host string
 	if useHostname {
 		host = datanode.GetHostName()
 	} else {
 		host = datanode.GetIpAddr()
+	}
+	hostAlias, exist := dnAliases[host]
+	if exist {
+		host = hostAlias
 	}
 
 	return fmt.Sprintf("%s:%d", host, datanode.GetXferPort())
